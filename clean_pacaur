@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+
+# clean_pacaur		v0.1					2016=05-18
+# under the WTFPL. see http://sam.zoy.org/wtfpl/
+#
+#             DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
+#                     Version 2, December 2004
+#
+#  Copyright (C) 2016  Narthana Epa               <narthana.epa@gmail.com>
+#  Everyone is permitted to copy and distribute verbatim or modified
+#  copies of this license document, and changing it is allowed as long
+#  as the name is changed.
+#
+#             DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
+#    TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION
+#
+#   0. You just DO WHAT THE FUCK YOU WANT TO.
+
+PACAUR_CACHE_DIR="$HOME/.cache/pacaur" # TODO: should parse pacur config file
+PKGEXT='.pkg.tar.xz' # TODO: work out how to wildcard out the .xz or predict the ext
+CLEANCMD='git clean -fx'
+
+function error_exit
+{
+	echo "$1" 1>&2
+	exit 1
+}
+
+if ! cd $PACAUR_CACHE_DIR; then
+  error_exit "$PACAUR_CACHE_DIR not found"
+fi
+
+for d in */ ; do
+    if ! cd ${PACAUR_CACHE_DIR}/${d}; then
+      error_exit "${PACAUR_CACHE_DIR}/${d} not found"
+    fi
+
+    ## remove any uninstalled packages
+    delete="true"
+    pkgnames=$(makepkg --printsrcinfo | grep -oP 'pkgname = \K.*')
+
+    ## test to see if packages are installed. should be tolerant of spilts
+    for i in ${pkgnames[@]}; do
+      if pacman -Q $i >> /dev/null 2> /dev/null; then
+        delete="false"
+      fi
+    done
+
+    # remove directories of uninstalled packages, should be safe for rm -rf an
+    # empty variable. exit the loop is the package is uninstalled
+    if [ $delete == "true" ] && ! [ -z "${d::-1}" ]; then
+      cd ${PACAUR_CACHE_DIR}
+			echo "Removing ${d::-1}"
+      rm -rf "${d::-1}"
+      continue
+    fi
+
+    cd ${PACAUR_CACHE_DIR}/${d}
+
+    ## cleaning source directories
+    gitcmd=${CLEANCMD}
+
+    # add the built package files to the git clean command
+    IFS=$'\n' # not sure if necessary TODO test this
+    packages=$(makepkg --packagelist)
+    for i in ${packages[@]}; do
+      gitcmd=${gitcmd}' --exclude='${i}${PKGEXT}
+    done
+
+    # create list of source files
+    sources=$(makepkg --printsrcinfo | grep -oP 'source = \K.*')
+    sources=${sources}$'\n'$(makepkg --printsrcinfo | grep -oP 'source_i686 = \K.*')
+    sources=${sources}$'\n'$(makepkg --printsrcinfo | grep -oP 'source_x86_64 = \K.*')
+
+    # add the source files to the git clean command
+    for i in ${sources[@]}; do
+      if [[ $i != *"git+"* ]] && [[ $i != *"svn+"* ]] && \
+         [[ $i != *"bzr+"* ]] && [[ $i != *"hg+"* ]] && \
+         [[ $i != *"git://"* ]] &&  [[ $i != *"svn://"* ]] && \
+         [[ $i != *"bzr://"* ]] && [[ $i != *"hg://"* ]]; then
+
+        if [[ $i == *"::"* ]]; then # renamed source files
+          i="${i%%::*}"
+        else # get the filename out the the url
+          i="${i##*/}"
+        fi
+        gitcmd=${gitcmd}' --exclude='${i}
+
+      fi
+    done
+
+    eval $gitcmd
+done
